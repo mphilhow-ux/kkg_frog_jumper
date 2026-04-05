@@ -176,7 +176,6 @@ function draw() {
   // Debug text
   fill(0);
   textSize(14);
-  text("cameraY: " + cameraY, 10, 40);
 
   // Screen tint overlay
   push();
