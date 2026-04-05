@@ -13,6 +13,7 @@ const ZONES = [
 ];
 
 const FINISH_LINE = -45;
+const GATE_ROW = FINISH_LINE + 1;
 
 // ============================================================
 // GAME STATE
@@ -37,6 +38,7 @@ let frogJumpImg;
 let logImg;
 let carImg;
 let cursiveFont;
+let gateImg;
 
 // ============================================================
 // P5 LIFECYCLE
@@ -48,9 +50,11 @@ function preload() {
   logImg      = loadImage("images/log.svg");
   carImg      = loadImage("images/car.svg");
   cursiveFont = loadFont("fonts/awesome.ttf");
+  gateImg     = loadImage("images/gate.svg");
 }
 
 function setup() {
+  pixelDensity(2); // 2× internal resolution — prevents SVG pixelation when upscaled
   createCanvas(COLS * TILE, ROWS * TILE);
 
   frog = {
@@ -64,18 +68,12 @@ function draw() {
   noStroke();
 
   // ---- Death screen ----
-  // When dead: freeze all game logic, draw black overlay + message,
-  // count down 120 frames (~2s), then respawn.
-  // The `return` below means nothing after this block executes while dead,
-  // which is what prevents the click-through glitch.
   if (gameState === "dead") {
-    // Draw the frozen world underneath the overlay
     cameraY = Math.floor(frog.worldY - FROG_SCREEN_ROW);
     cameraY = min(0, cameraY);
     drawLanes();
     drawFrog();
 
-    // Fade in a black overlay over the first 20 frames
     let elapsed = 120 - deathTimer;
     let alpha = min(200, elapsed * 10);
     push();
@@ -84,7 +82,6 @@ function draw() {
     rect(0, 0, width, height);
     pop();
 
-    // Message — only show once overlay is mostly opaque
     if (elapsed > 15) {
       push();
       textAlign(CENTER, CENTER);
@@ -100,7 +97,7 @@ function draw() {
 
     deathTimer--;
     if (deathTimer <= 0) resetFrog();
-    return; // <-- EXIT draw() early: no input, no physics, no glitch
+    return;
   }
 
   // ---- Win screen ----
@@ -110,22 +107,20 @@ function draw() {
     drawLanes();
     drawFrog();
 
-    // Fade in a golden overlay over the first 20 frames
     let winElapsed = 120 - winTimer;
     let winAlpha = min(210, winElapsed * 10);
     push();
     noStroke();
-    fill(255, 200, 0, winAlpha * .6); // dark gold tint
+    fill(255, 200, 0, winAlpha * 0.6); // bright gold overlay
     rect(0, 0, width, height);
     pop();
 
-    // Message — wait until overlay is visible
     if (winElapsed > 15) {
       push();
       textAlign(CENTER, CENTER);
       noStroke();
       textSize(36);
-      fill(255, 220, 50); // gold
+      fill(255, 220, 50);
       text("You Win!", width / 2, height / 2 - 22);
       textSize(15);
       fill(200, 200, 150);
@@ -135,22 +130,19 @@ function draw() {
 
     winTimer--;
     if (winTimer <= 0) resetFrog();
-    return; // freeze all game logic during win screen
+    return;
   }
 
   updateJump();
 
-  // Camera: clamp so we never scroll below the start row
   cameraY = Math.floor(frog.worldY - FROG_SCREEN_ROW);
   cameraY = min(0, cameraY);
 
   updateLanes();
   drawLanes();
 
-  // ---- Hazard checks (only when frog is grounded) ----
+  // ---- Hazard + finish line checks ----
   if (!frogJumping) {
-    // Finish line check — must come BEFORE lane hazards so a winning
-    // frog isn't also killed by water on the same frame
     if (frog.worldY <= FINISH_LINE) {
       triggerWin();
     } else {
@@ -190,8 +182,8 @@ function draw() {
 // ============================================================
 
 function keyPressed() {
-  if (gameState === "dead") return; // block ALL input during death screen
-  if (gameState === "win")  return; // block ALL input during win screen
+  if (gameState === "dead") return;
+  if (gameState === "win")  return;
   if (frogJumping) return;
 
   let dx = 0, dy = 0;
@@ -212,37 +204,19 @@ function keyPressed() {
 // LANE CREATION
 // ============================================================
 
-/*
- * createLane(worldY)
- *
- * The three zones each have their own generation rules.
- *
- * For water lanes (swamp + river) the generation order is:
- *   1. Place logs (platforms)
- *   2. Place crocs in the REMAINING space, respecting a buffer
- *   3. Verify at least one log is croc-free (solvability guarantee)
- *
- * Crocs are completely separate objects from logs.
- * They share the same lane.speed but are stored in lane.crocs[].
- */
-
 function createLane(worldY) {
   let zone = getZoneForRow(worldY);
 
   // ---- SWAMP ----
   if (zone === "swamp") {
-    // 30% chance of a safe grassy bank (was 50%) — more water lanes to cross
     if (random() < 0.3) {
       return makeSafeLane(worldY);
     }
 
-    let speed = random([-2.5, -2, 2, 2.5]); // faster → less waiting between logs
-    // More logs (4–6), wider logs (3–5 tiles) → easier to land on
-    let logs  = generateLogs(3, 5, 4, 6);   // (minW, maxW, minCount, maxCount)
-    // Fewer crocs (0–1) → less punishment
-    let crocs = generateCrocs(logs, 1, 3);   // 1-3 crocs in the wide gaps
+    let speed = random([-2.5, -2, 2, 2.5]);
+    let logs  = generateLogs(3, 5, 4, 6);
+    let crocs = generateCrocs(logs, 1, 3);
 
-    // Guarantee solvability: re-generate until at least one log is clear
     let safety = 0;
     while (!laneHasSafePath(logs, crocs) && safety < 10) {
       logs  = generateLogs(3, 5, 4, 6);
@@ -250,21 +224,13 @@ function createLane(worldY) {
       safety++;
     }
 
-    return {
-      worldY,
-      type: "water",
-      speed,
-      logs,
-      crocs
-    };
+    return { worldY, type: "water", speed, logs, crocs };
   }
 
   // ---- RIVER ----
   if (zone === "river") {
-    let speed = random([-3.25, -2.25, 2.25, 3.25]);
-    // More logs (3–5), wider (3–5 tiles) → river is still hard but crossable
+    let speed = random([-3, -2.5, 2.5, 3]);
     let logs  = generateLogs(3, 5, 3, 5);
-    // Max 1 croc per river lane — river speed is already the main challenge
     let crocs = generateCrocs(logs, 1, 2);
 
     let safety = 0;
@@ -274,72 +240,41 @@ function createLane(worldY) {
       safety++;
     }
 
-    return {
-      worldY,
-      type: "water",
-      speed,
-      logs,
-      crocs
-    };
+    return { worldY, type: "water", speed, logs, crocs };
   }
 
   // ---- TOWN ----
   if (zone === "town") {
-    // Visual car length in tiles = SVG ratio = 249.6/115.2 ≈ 2.17 tiles.
-    // Place cars left-to-right so each one starts after the previous
-    // car's visual length + a gap, preventing any overlap.
-    const CAR_LEN = 249.6 / 115.2; // ≈ 2.17 tiles
-    const CAR_GAP = random(1.5, 3); // tile gap between cars
+    const CAR_LEN = 249.6 / 115.2;
+    const CAR_GAP = random(1.5, 3);
 
     let carCount = floor(random(1, 3));
     let cars = [];
-    let cursor = random(0, COLS); // random starting position
+    let cursor = random(0, COLS);
 
     for (let i = 0; i < carCount; i++) {
-      cars.push({ x: cursor, width: 1 }); // width:1 for collision hitbox
+      cars.push({ x: cursor, width: 1 });
       cursor += CAR_LEN + CAR_GAP;
     }
 
-    return {
-      worldY,
-      type: "road",
-      speed: random([-2, -1, 1, 2]),
-      cars
-    };
+    return { worldY, type: "road", speed: random([-2, -1, 1, 2]), cars };
   }
 
-  // ---- DEFAULT (safe grass) ----
   return makeSafeLane(worldY);
 }
 
 function makeSafeLane(worldY) {
-  return {
-    worldY,
-    type: "safe",
-    speed: 0,
-    decor: generateDecor()
-  };
+  return { worldY, type: "safe", speed: 0, decor: generateDecor() };
 }
 
 // ============================================================
 // LOG GENERATION
 // ============================================================
 
-/*
- * generateLogs(minW, maxW, minCount, maxCount)
- *
- * Places logs one-by-one, rejecting any that overlap existing logs
- * (with a small padding gap so they don't butt up against each other).
- * Returns the array of log objects.
- */
 function generateLogs(minW, maxW, minCount, maxCount) {
-  // Fill the entire wrap window [-26, 35] so logs are always on screen.
-  // Gap modes give visual variety — but the minimum gap is now 0.6 tiles
-  // across ALL modes. The old 0.2 minimum caused logs to spawn nearly
-  // touching, and after independent wrapping they could visually merge.
   const FILL_FROM  = -26;
   const FILL_TO    =  35;
-  const MIN_GAP    = 0.6; // hard minimum between any two logs
+  const MIN_GAP    = 0.6;
 
   let logs = [];
   let cursor = FILL_FROM + random(0, 1.5);
@@ -348,12 +283,11 @@ function generateLogs(minW, maxW, minCount, maxCount) {
     let w = floor(random(minW, maxW + 1));
     logs.push({ x: cursor, width: w });
 
-    // Three gap modes for visual rhythm — all floored at MIN_GAP
     let roll = random();
     let gap;
-    if      (roll < 0.25) gap = random(0.6, 0.9);   // close cluster (was 0.2–0.5)
-    else if (roll < 0.75) gap = random(0.9, 1.8);   // normal
-    else                  gap = random(2.2, 3.8);   // wide gap — hazard
+    if      (roll < 0.25) gap = random(0.6, 0.9);
+    else if (roll < 0.75) gap = random(0.9, 1.8);
+    else                  gap = random(2.2, 3.8);
 
     cursor += w + max(gap, MIN_GAP);
   }
@@ -365,79 +299,42 @@ function generateLogs(minW, maxW, minCount, maxCount) {
 // CROC GENERATION
 // ============================================================
 
-/*
- * generateCrocs(logs, minCount, maxCount)
- *
- * Strategy: scan the lane for FREE GAPS between (and around) logs,
- * then place crocs only inside those gaps.
- *
- * This is more reliable than random placement + rejection because
- * it works with the actual available space instead of guessing.
- *
- * Steps:
- *   1. Sort logs by x position
- *   2. Identify every gap segment between logs (and at lane edges)
- *   3. For each gap wide enough, optionally place a croc inside it
- *   4. Croc width is chosen from [2, 3] tiles so crocs are always
- *      visually chunky and distinct from the water background
- */
 function generateCrocs(logs, minCount, maxCount) {
-  // FILL bounds must match generateLogs exactly.
-  // Old code used [0, COLS] = [0, 9] as the search window — but logs now
-  // span [-26, 35], so almost every tile in [0,9] was already a log.
-  // No gaps were found and crocs were never placed.
-  // Fix: scan the full [-26, 35] window to find gaps between logs.
   const FILL_FROM  = -26;
   const FILL_TO    =  35;
-  const BUFFER     = 0.35; // gap between croc edge and log edge
+  const BUFFER     = 0.35;
   const MIN_CROC_W = 2;
   const MAX_CROC_W = 3;
 
-  // 1. Sort logs by left edge
   let sorted = [...logs].sort((a, b) => a.x - b.x);
-
-  // 2. Walk the full window and collect every gap wide enough for a croc
   let gaps = [];
 
-  // Gap between FILL_FROM and the first log
   let firstGapEnd = sorted.length > 0 ? sorted[0].x - BUFFER : FILL_TO;
   if (firstGapEnd - FILL_FROM >= MIN_CROC_W) {
     gaps.push([FILL_FROM, firstGapEnd]);
   }
 
-  // Gaps between consecutive logs
   for (let i = 0; i < sorted.length - 1; i++) {
     let gStart = sorted[i].x + sorted[i].width + BUFFER;
     let gEnd   = sorted[i + 1].x - BUFFER;
-    if (gEnd - gStart >= MIN_CROC_W) {
-      gaps.push([gStart, gEnd]);
-    }
+    if (gEnd - gStart >= MIN_CROC_W) gaps.push([gStart, gEnd]);
   }
 
-  // Gap between last log and FILL_TO
   if (sorted.length > 0) {
     let lastGapStart = sorted[sorted.length - 1].x + sorted[sorted.length - 1].width + BUFFER;
-    if (FILL_TO - lastGapStart >= MIN_CROC_W) {
-      gaps.push([lastGapStart, FILL_TO]);
-    }
+    if (FILL_TO - lastGapStart >= MIN_CROC_W) gaps.push([lastGapStart, FILL_TO]);
   }
 
-  // 3. Shuffle so croc positions vary each lane
   gaps.sort(() => random() - 0.5);
 
-  // 4. Place crocs — one per gap, up to targetCount
   let crocs = [];
   let targetCount = floor(random(minCount, maxCount + 1));
 
   for (let gap of gaps) {
     if (crocs.length >= targetCount) break;
-
     let [gStart, gEnd] = gap;
-
-    // Pick a width that fits inside this gap
     let possibleWidths = [MIN_CROC_W, MAX_CROC_W].filter(w => w <= gEnd - gStart);
     if (possibleWidths.length === 0) continue;
-
     let w = random(possibleWidths);
     let x = random(gStart, gEnd - w);
     crocs.push({ x, width: w });
@@ -450,31 +347,16 @@ function generateCrocs(logs, minCount, maxCount) {
 // SOLVABILITY CHECK
 // ============================================================
 
-/*
- * laneHasSafePath(logs, crocs)
- *
- * Returns true if at least one log exists that has NO croc on top of it.
- * A lane with zero croc-free logs cannot be crossed safely.
- *
- * Note: crocs and logs shouldn't spatially overlap (enforced at generation),
- * but this is a logical double-check for gameplay solvability.
- */
 function laneHasSafePath(logs, crocs) {
   for (let log of logs) {
     let blocked = false;
-
     for (let croc of crocs) {
-      if (overlapsWithBuffer(
-        log.x, log.x + log.width,
-        croc.x, croc.x + croc.width,
-        0
-      )) {
+      if (overlapsWithBuffer(log.x, log.x + log.width, croc.x, croc.x + croc.width, 0)) {
         blocked = true;
         break;
       }
     }
-
-    if (!blocked) return true; // found at least one safe log
+    if (!blocked) return true;
   }
   return false;
 }
@@ -483,26 +365,10 @@ function laneHasSafePath(logs, crocs) {
 // LANE UPDATE (movement)
 // ============================================================
 
-/*
- * updateLanes()
- *
- * Every frame: advance log.x and croc.x by lane.speed * 0.02.
- * Wrap both around the screen edges.
- * Logs and crocs are updated independently from each other.
- */
 function updateLanes() {
-  // FIX: The old code wrapped each object based on its own width:
-  //   log wraps at x < -log.width   (e.g. -5 for a wide log)
-  //   croc wraps at x < -croc.width (e.g. -2 for a narrow croc)
-  // This means after one wrap cycle a croc is now 3 tiles displaced
-  // relative to the logs it was placed between. Over time they fully
-  // overlap. Fix: ALL objects in a lane wrap at the same fixed sentinel
-  // values (-TILE_SENTINEL and COLS + TILE_SENTINEL), regardless of width.
-  // This keeps relative spacing between logs and crocs stable forever.
-  const SENTINEL = 26; // wrap window = [-26, COLS+26] = [-26,35], wider than FILL_TO=33
+  const SENTINEL = 26;
 
   for (let lane of Object.values(laneMap)) {
-
     if (lane.logs) {
       for (let log of lane.logs) {
         log.x += lane.speed * 0.02;
@@ -510,8 +376,6 @@ function updateLanes() {
         if (log.x < -SENTINEL)        log.x += (COLS + SENTINEL * 2);
       }
     }
-
-    // Crocs use IDENTICAL wrap math so they stay in sync with logs
     if (lane.crocs) {
       for (let croc of lane.crocs) {
         croc.x += lane.speed * 0.02;
@@ -519,7 +383,6 @@ function updateLanes() {
         if (croc.x < -SENTINEL)        croc.x += (COLS + SENTINEL * 2);
       }
     }
-
     if (lane.cars) {
       for (let car of lane.cars) {
         car.x += lane.speed * 0.02;
@@ -534,17 +397,10 @@ function updateLanes() {
 // DRAWING
 // ============================================================
 
-/*
- * drawRoundedShadow(x, y, w, h, r)
- *
- * Draws a very subtle semi-transparent rounded rectangle to simulate
- * a drop shadow. Deliberately soft and understated — just enough depth.
- * x/y are the shadow's top-left (offset from the object by a few px).
- */
 function drawRoundedShadow(x, y, w, h, r) {
   push();
   noStroke();
-  fill(0, 0, 0, 35); // very low alpha — subtle, not muddy
+  fill(0, 0, 0, 35);
   rect(x, y, w, h, r);
   pop();
 }
@@ -556,12 +412,17 @@ function drawLanes() {
 
     drawLaneBg(lane, screenRow);
     drawLogs(lane, screenRow);
-    drawCrocs(lane, screenRow);   // drawn AFTER logs, never on top because no spatial overlap
+    drawCrocs(lane, screenRow);
     drawCars(lane, screenRow);
+
+    // Draw gate at its world row
+    if (worldY === GATE_ROW) {
+      let y = screenRow * TILE;
+      drawGate(y);
+    }
   }
 }
 
-// --- Background tile ---
 function drawLaneBg(lane, screenRow) {
   let y = screenRow * TILE;
 
@@ -574,7 +435,6 @@ function drawLaneBg(lane, screenRow) {
 
   rect(0, y, width, TILE);
 
-  // Grass decorations on safe lanes
   if (lane.decor) {
     for (let d of lane.decor) {
       let px = d.x * TILE;
@@ -593,7 +453,6 @@ function drawLaneBg(lane, screenRow) {
   }
 }
 
-// --- Logs ---
 function drawLogs(lane, screenRow) {
   if (lane.type !== "water" || !lane.logs) return;
 
@@ -603,18 +462,12 @@ function drawLogs(lane, screenRow) {
     let px  = log.x * TILE;
     let bob = sin(frameCount * 0.05 + log.x) * 4;
 
-    // Subtle rounded-rect shadow drawn before the log image
-    let logShadowX = px + 5;
-    let logShadowY = y + 5 + bob + 5;
-    let logShadowW = log.width * TILE - 10;
-    let logShadowH = TILE - 10;
-    drawRoundedShadow(logShadowX, logShadowY, logShadowW, logShadowH, 12);
+    drawRoundedShadow(px + 5, y + 5 + bob + 5, log.width * TILE - 10, TILE - 10, 12);
 
-    // ---- Log image with rounded-rect clip mask ----
     push();
     drawingContext.save();
 
-    let rx = px,       ry = y + 5 + bob;
+    let rx = px,  ry = y + 5 + bob;
     let rw = log.width * TILE - 10,  rh = TILE - 10;
     let r  = 12;
 
@@ -638,67 +491,55 @@ function drawLogs(lane, screenRow) {
   }
 }
 
-// --- Crocs (completely independent draw pass) ---
 function drawCrocs(lane, screenRow) {
   if (lane.type !== "water" || !lane.crocs) return;
 
   let y = screenRow * TILE;
 
   for (let croc of lane.crocs) {
-    let px  = croc.x * TILE;
-    let bob = sin(frameCount * 0.05 + croc.x) * 4;
-
+    let px   = croc.x * TILE;
+    let bob  = sin(frameCount * 0.05 + croc.x) * 4;
     let crocW = croc.width * TILE - 10;
     let crocH = TILE - 20;
     let crocX = px;
     let crocY = y + 10 + bob;
 
-    // Subtle rounded-rect shadow
     drawRoundedShadow(crocX + 5, crocY + 5, crocW, crocH, 8);
 
-    // Body
     fill(20, 100, 20);
     rect(crocX, crocY, crocW, crocH, 8);
 
-    // Eyes (two small yellow dots near one end)
     fill(220, 220, 0);
     let eyeY = crocY + 4;
     ellipse(px + 8,  eyeY, 6);
     ellipse(px + 16, eyeY, 6);
 
-    // Pupil
     fill(0);
     ellipse(px + 8,  eyeY, 3);
     ellipse(px + 16, eyeY, 3);
   }
 }
 
-// --- Cars ---
 function drawCars(lane, screenRow) {
   if (lane.type !== "road" || !lane.cars) return;
 
   let y = screenRow * TILE;
 
-  // Natural SVG proportions: 115.2 wide × 249.6 tall (portrait).
-  // Rotated 90°: 249.6 along lane × 115.2 across lane.
-  // Fix height to TILE, derive length proportionally — never squished.
-  const carH = TILE;                        // height across the lane
-  const carW = TILE * (249.6 / 115.2);     // natural length along the lane (~108px)
+  const carH = TILE;
+  const carW = TILE * (249.6 / 115.2);
 
   for (let car of lane.cars) {
-    let px = car.x * TILE;                 // left anchor in pixels
-    let cx = px + carW / 2;               // centre x
-    let cy = y  + carH / 2;               // centre y
+    let px = car.x * TILE;
+    let cx = px + carW / 2;
+    let cy = y  + carH / 2;
 
-    // Shadow
     drawRoundedShadow(px + 5, y + 5, carW, carH, 8);
 
-    // Draw at natural proportions, rotated 90° to face sideways
     push();
     translate(cx, cy);
     rotate(HALF_PI);
     imageMode(CENTER);
-    image(carImg, 0, 0, carH, carW);      // axes swap after rotation
+    image(carImg, 0, 0, carH, carW);
     imageMode(CORNER);
     pop();
   }
@@ -708,16 +549,6 @@ function drawCars(lane, screenRow) {
 // HAZARD CHECKS
 // ============================================================
 
-/*
- * checkWaterHazards(lane)
- *
- * Called every frame when the frog is grounded on a water tile.
- *
- * Order of priority:
- *   1. Is the frog on a croc?  → die.
- *   2. Is the frog on a log?   → ride it (frog drifts with log).
- *   3. Neither?                → die (fell in water).
- */
 function checkWaterHazards(lane) {
   if (lane.type !== "water") return;
 
@@ -728,10 +559,9 @@ function checkWaterHazards(lane) {
 
   let log = frogOnLog(lane);
   if (log) {
-    // Frog rides the log: add the same per-frame displacement
     frog.x += lane.speed * 0.02;
   } else {
-    killFrog(); // in water with no platform
+    killFrog();
   }
 }
 
@@ -740,12 +570,6 @@ function checkRoadHazards(lane) {
   if (frogHitCar(lane)) killFrog();
 }
 
-// ---- Collision helpers ----
-
-/*
- * frogOnLog(lane) → returns the log the frog's center is over, or null.
- * Uses the frog's horizontal center (frog.x + 0.5) for a fair hit window.
- */
 function frogOnLog(lane) {
   if (!lane.logs) return null;
   let fc = frog.x + 0.5;
@@ -755,10 +579,6 @@ function frogOnLog(lane) {
   return null;
 }
 
-/*
- * frogOnCroc(lane) → returns true if the frog's center is over any croc.
- * Checked BEFORE frogOnLog so crocs always take priority.
- */
 function frogOnCroc(lane) {
   if (!lane.crocs) return false;
   let fc = frog.x + 0.5;
@@ -784,12 +604,10 @@ function drawFrog() {
   let px = Math.round(frog.x * TILE);
   let py = Math.round((frog.worldY - cameraY) * TILE);
 
-  // Arc height during jump
   if (frogJumping) {
     py -= sin((jumpProgress / jumpDuration) * PI) * 12;
   }
 
-  // Shadow
   push();
   noStroke();
   fill(0, 0, 0, 80);
@@ -799,7 +617,6 @@ function drawFrog() {
   ellipse(px + TILE / 2, py + TILE - 3 + lift, TILE * 0.8 * squash, TILE * 0.3 * squash);
   pop();
 
-  // Use jumping image while airborne, resting image when grounded
   let currentFrogImg = frogJumping ? frogJumpImg : frogImg;
   image(currentFrogImg, px, py, TILE, TILE);
 }
@@ -838,18 +655,19 @@ function updateJump() {
 function killFrog() {
   if (gameState !== "playing") return;
   gameState  = "dead";
-  deathTimer = 120; // 2 seconds at 60fps — long enough to read the message
+  deathTimer = 120;
 }
 
 function triggerWin() {
   if (gameState !== "playing") return;
   gameState = "win";
-  winTimer  = 120; // same duration as death screen
+  winTimer  = 120;
 }
 
 function resetFrog() {
   frog.x      = Math.floor(COLS / 2);
   frog.worldY = ROWS - 1;
+  laneMap     = {};
   gameState   = "playing";
 }
 
@@ -879,13 +697,6 @@ function getZoneForRow(worldY) {
 // SPATIAL HELPERS
 // ============================================================
 
-/*
- * overlapsAny(x, xEnd, entities, buffer)
- *
- * Returns true if the range [x, xEnd] overlaps any entity in the array,
- * expanded by `buffer` on each side.
- * Works for both log[] and croc[] arrays (anything with .x and .width).
- */
 function overlapsAny(x, xEnd, entities, buffer) {
   for (let e of entities) {
     if (overlapsWithBuffer(x, xEnd, e.x, e.x + e.width, buffer)) return true;
@@ -893,12 +704,6 @@ function overlapsAny(x, xEnd, entities, buffer) {
   return false;
 }
 
-/*
- * overlapsWithBuffer(aStart, aEnd, bStart, bEnd, buffer)
- *
- * Core overlap test. The buffer widens B's range on both sides before
- * comparing, enforcing a minimum gap between A and B.
- */
 function overlapsWithBuffer(aStart, aEnd, bStart, bEnd, buffer) {
   return aStart < bEnd + buffer && aEnd > bStart - buffer;
 }
@@ -907,26 +712,26 @@ function overlapsWithBuffer(aStart, aEnd, bStart, bEnd, buffer) {
 // DECORATIONS & PARTICLES
 // ============================================================
 
-function generateDecor() {
-  let items = [];
-  let count = floor(random(0, 3));
-  for (let i = 0; i < count; i++) {
-    items.push({
-      x: random(0, COLS),
-      type: random(["flower", "grass"]),
-      size: random(6, 8),
-      color: random(flowerColors)
-    });
-  }
-  return items;
-}
-
 let flowerColors = [
   [255, 180, 200], // pink
   [255, 220, 120], // yellow
   [200, 160, 255], // purple
   [255, 140, 140], // coral
 ];
+
+function generateDecor() {
+  let items = [];
+  let count = floor(random(0, 5));
+  for (let i = 0; i < count; i++) {
+    items.push({
+      x: random(0, COLS),
+      type: random(["flower", "grass"]),
+      size: random(8, 12),
+      color: random(flowerColors)
+    });
+  }
+  return items;
+}
 
 function drawParticles() {
   noStroke();
@@ -943,4 +748,20 @@ function drawParticles() {
 
     if (p.life <= 0) particles.splice(i, 1);
   }
+}
+
+// ============================================================
+// GATE DRAWING
+// ============================================================
+
+function drawGate(y) {
+  // Span the full canvas width for maximum resolution.
+  // pixelDensity(2) means the SVG is rasterised at 2× before drawing
+  // so even large sizes stay sharp instead of pixelated.
+  let gateWidth  = width; // full canvas = COLS * TILE = 450px
+  let aspect     = gateImg.height / gateImg.width;
+  let gateHeight = gateWidth * aspect;
+
+  // Centre horizontally, anchor base to the row
+  image(gateImg, 0, y - gateHeight + TILE, gateWidth, gateHeight);
 }
