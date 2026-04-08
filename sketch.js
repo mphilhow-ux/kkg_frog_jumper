@@ -9,10 +9,10 @@ const FROG_SCREEN_ROW = 8;
 const ZONES = [
   { name: "swamp", start: -15, end: 5 },
   { name: "river", start: -25, end: -16 },
-  { name: "town",  start: -35, end: -26 }
+  { name: "town",  start: -32, end: -26 }
 ];
 
-const FINISH_LINE = -40;
+const FINISH_LINE = -36;
 const GATE_ROW = FINISH_LINE + 1;
 
 // ============================================================
@@ -240,7 +240,11 @@ function keyPressed() {
 
   let newX = frog.x + dx;
   let newY = frog.worldY + dy;
+  //horizontal bounds
   if (newX < 0 || newX >= COLS) return;
+
+  //vertical bounds
+  if (newY > ROWS - 1) return;
 
   startJump(newX, newY);
 }
