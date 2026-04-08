@@ -7,12 +7,12 @@ const ROWS = 13;
 const FROG_SCREEN_ROW = 8;
 
 const ZONES = [
-  { name: "swamp", start: -20, end: 5 },
-  { name: "river", start: -30, end: -21 },
-  { name: "town",  start: -40, end: -31 }
+  { name: "swamp", start: -15, end: 5 },
+  { name: "river", start: -25, end: -16 },
+  { name: "town",  start: -35, end: -26 }
 ];
 
-const FINISH_LINE = -45;
+const FINISH_LINE = -40;
 const GATE_ROW = FINISH_LINE + 1;
 
 // ============================================================
