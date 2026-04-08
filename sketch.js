@@ -1,7 +1,7 @@
 // ============================================================
 // CONSTANTS
 // ============================================================
-const TILE = 50;
+let TILE = 50; // recalculated in setup() to fit window height
 const COLS = 9;
 const ROWS = 13;
 const FROG_SCREEN_ROW = 8;
@@ -18,6 +18,8 @@ const GATE_ROW = FINISH_LINE + 1;
 // ============================================================
 // GAME STATE
 // ============================================================
+
+let cameraYVisual = 0;
 let frog;
 let lanes = [];
 let cameraY = 0;
@@ -49,13 +51,51 @@ function preload() {
   frogJumpImg = loadImage("images/jumpingfrog.svg");
   logImg      = loadImage("images/log.svg");
   carImg      = loadImage("images/car.svg");
-  cursiveFont = loadFont("fonts/awesome.ttf");
-  gateImg     = loadImage("images/gate.svg");
+  cursiveFont = loadFont("fonts/PrincessAndTheFrog-XdMd.ttf");
+  // gateImg loaded separately via loadGateSVG() for crisp vector rendering
+}
+
+// Native HTMLImageElement for the gate — drawn via drawingContext for true vector quality
+let gateElement = null;
+let gateReady   = false;
+
+function loadGateSVG() {
+  // Fetch the SVG as text, create a Blob URL, and assign it to an HTMLImageElement.
+  // This makes the browser render the SVG at full vector resolution at draw time,
+  // bypassing p5's lossy loadImage() bitmap conversion entirely.
+  fetch("images/gate.svg")
+    .then(r => r.text())
+    .then(svgText => {
+      let blob = new Blob([svgText], { type: "image/svg+xml" });
+      let url  = URL.createObjectURL(blob);
+      gateElement = new Image();
+      gateElement.onload = () => { gateReady = true; };
+      gateElement.src = url;
+    });
 }
 
 function setup() {
-  pixelDensity(2); // 2× internal resolution — prevents SVG pixelation when upscaled
-  createCanvas(COLS * TILE, ROWS * TILE);
+  // Scale TILE so the canvas fills the full browser window height.
+  // ROWS = 13 rows tall, so each tile = windowHeight / 13.
+  // Width follows naturally: COLS * TILE wide.
+  TILE = floor(windowHeight / ROWS);
+
+  pixelDensity(2);
+  let cnv = createCanvas(COLS * TILE, ROWS * TILE);
+  loadGateSVG();
+
+  // Centre the canvas in the browser window using CSS
+  cnv.style('display', 'block');
+  cnv.style('margin', '0 auto');
+  // Remove default body margin so nothing shifts the canvas off-centre
+  document.body.style.margin    = '0';
+  document.body.style.padding   = '0';
+  document.body.style.background = '#222'; // dark bg visible on sides if window is wide
+  document.body.style.display   = 'flex';
+  document.body.style.justifyContent = 'center';
+  document.body.style.alignItems     = 'center';
+  document.body.style.height    = '100vh';
+  document.body.style.overflow  = 'hidden';
 
   frog = {
     x: Math.floor(COLS / 2),
@@ -86,9 +126,14 @@ function draw() {
       push();
       textAlign(CENTER, CENTER);
       noStroke();
-      textSize(28);
+
+      textFont(cursiveFont);
+      textSize(34);
       fill(255, 80, 80);
       text("Better luck next time!", width / 2, height / 2 - 20);
+      
+      
+      textFont('sans-serif');
       textSize(15);
       fill(180, 180, 180);
       text("Thanks for playing!", width / 2, height / 2 + 18);
@@ -111,7 +156,7 @@ function draw() {
     let winAlpha = min(210, winElapsed * 10);
     push();
     noStroke();
-    fill(255, 200, 0, winAlpha * 0.6); // bright gold overlay
+    fill(34, 139, 60, winAlpha * 0.6); // bright gold overlay
     rect(0, 0, width, height);
     pop();
 
@@ -119,9 +164,12 @@ function draw() {
       push();
       textAlign(CENTER, CENTER);
       noStroke();
+      textFont(cursiveFont);
       textSize(36);
       fill(255, 220, 50);
       text("You Win!", width / 2, height / 2 - 22);
+
+      textFont('sans-serif');
       textSize(15);
       fill(200, 200, 150);
       text("Thanks for playing!", width / 2, height / 2 + 18);
@@ -137,6 +185,7 @@ function draw() {
 
   cameraY = Math.floor(frog.worldY - FROG_SCREEN_ROW);
   cameraY = min(0, cameraY);
+  cameraYVisual = lerp(cameraYVisual, cameraY, 0.1);
 
   updateLanes();
   drawLanes();
@@ -164,10 +213,6 @@ function draw() {
 
   drawParticles();
   drawFrog();
-
-  // Debug text
-  fill(0);
-  textSize(14);
 
   // Screen tint overlay
   push();
@@ -213,7 +258,7 @@ function createLane(worldY) {
       return makeSafeLane(worldY);
     }
 
-    let speed = random([-2.5, -2, 2, 2.5]);
+    let speed = random([-2, -1.5, 1.5, 2]);
     let logs  = generateLogs(3, 5, 4, 6);
     let crocs = generateCrocs(logs, 1, 3);
 
@@ -229,7 +274,7 @@ function createLane(worldY) {
 
   // ---- RIVER ----
   if (zone === "river") {
-    let speed = random([-3, -2.5, 2.5, 3]);
+    let speed = random([-2.5, -2.25, 2.25, 2.75]);
     let logs  = generateLogs(3, 5, 3, 5);
     let crocs = generateCrocs(logs, 1, 2);
 
@@ -257,7 +302,7 @@ function createLane(worldY) {
       cursor += CAR_LEN + CAR_GAP;
     }
 
-    return { worldY, type: "road", speed: random([-2, -1, 1, 2]), cars };
+    return { worldY, type: "road", speed: random([-2, -1.5, 1.5, 2]), cars };
   }
 
   return makeSafeLane(worldY);
@@ -406,25 +451,27 @@ function drawRoundedShadow(x, y, w, h, r) {
 }
 
 function drawLanes() {
-  for (let screenRow = 0; screenRow < ROWS; screenRow++) {
-    let worldY = cameraY + screenRow;
+  let yOffset = (cameraY - cameraYVisual) * TILE;
+
+  for (let screenRow = -1; screenRow <= ROWS; screenRow++) {
+    let baseRow = Math.floor(cameraY);
+    let worldY = baseRow + screenRow;
     let lane   = getLane(worldY);
 
-    drawLaneBg(lane, screenRow);
-    drawLogs(lane, screenRow);
-    drawCrocs(lane, screenRow);
-    drawCars(lane, screenRow);
+    drawLaneBg(lane, screenRow, yOffset);
+    drawLogs(lane, screenRow, yOffset);
+    drawCrocs(lane, screenRow, yOffset);
+    drawCars(lane, screenRow, yOffset);
 
-    // Draw gate at its world row
     if (worldY === GATE_ROW) {
-      let y = screenRow * TILE;
+      let y = screenRow * TILE + yOffset;
       drawGate(y);
     }
   }
 }
 
-function drawLaneBg(lane, screenRow) {
-  let y = screenRow * TILE;
+function drawLaneBg(lane, screenRow, yOffset) {
+  let y = screenRow * TILE + yOffset;
 
   if (lane.type === "safe") fill(80, 150, 60);
   if (lane.type === "water") {
@@ -453,10 +500,10 @@ function drawLaneBg(lane, screenRow) {
   }
 }
 
-function drawLogs(lane, screenRow) {
+function drawLogs(lane, screenRow, yOffset) {
   if (lane.type !== "water" || !lane.logs) return;
 
-  let y = screenRow * TILE;
+  let y = Math.round(screenRow * TILE + yOffset);
 
   for (let log of lane.logs) {
     let px  = log.x * TILE;
@@ -491,10 +538,10 @@ function drawLogs(lane, screenRow) {
   }
 }
 
-function drawCrocs(lane, screenRow) {
+function drawCrocs(lane, screenRow, yOffset) {
   if (lane.type !== "water" || !lane.crocs) return;
 
-  let y = screenRow * TILE;
+  let y = Math.round(screenRow * TILE + yOffset);
 
   for (let croc of lane.crocs) {
     let px   = croc.x * TILE;
@@ -511,19 +558,19 @@ function drawCrocs(lane, screenRow) {
 
     fill(220, 220, 0);
     let eyeY = crocY + 4;
-    ellipse(px + 8,  eyeY, 6);
-    ellipse(px + 16, eyeY, 6);
+    ellipse(px + 8,  eyeY, 8);
+    ellipse(px + 16, eyeY, 8);
 
     fill(0);
-    ellipse(px + 8,  eyeY, 3);
-    ellipse(px + 16, eyeY, 3);
+    ellipse(px + 8,  eyeY, 4);
+    ellipse(px + 16, eyeY, 4);
   }
 }
 
-function drawCars(lane, screenRow) {
+function drawCars(lane, screenRow, yOffset) {
   if (lane.type !== "road" || !lane.cars) return;
 
-  let y = screenRow * TILE;
+  let y = Math.round(screenRow * TILE + yOffset);
 
   const carH = TILE;
   const carW = TILE * (249.6 / 115.2);
@@ -573,8 +620,10 @@ function checkRoadHazards(lane) {
 function frogOnLog(lane) {
   if (!lane.logs) return null;
   let fc = frog.x + 0.5;
+  let buffer = 0.25; // 👈 tweak this value
+
   for (let log of lane.logs) {
-    if (fc >= log.x && fc <= log.x + log.width) return log;
+    if (fc >= log.x - buffer && fc <= log.x + log.width + buffer) return log;
   }
   return null;
 }
@@ -602,7 +651,7 @@ function frogHitCar(lane) {
 
 function drawFrog() {
   let px = Math.round(frog.x * TILE);
-  let py = Math.round((frog.worldY - cameraY) * TILE);
+  let py = Math.round((frog.worldY - cameraYVisual) * TILE);
 
   if (frogJumping) {
     py -= sin((jumpProgress / jumpDuration) * PI) * 12;
@@ -755,13 +804,17 @@ function drawParticles() {
 // ============================================================
 
 function drawGate(y) {
-  // Span the full canvas width for maximum resolution.
-  // pixelDensity(2) means the SVG is rasterised at 2× before drawing
-  // so even large sizes stay sharp instead of pixelated.
-  let gateWidth  = width; // full canvas = COLS * TILE = 450px
-  let aspect     = gateImg.height / gateImg.width;
-  let gateHeight = gateWidth * aspect;
+  if (!gateReady) return; // wait until the SVG blob has loaded
 
-  // Centre horizontally, anchor base to the row
-  image(gateImg, 0, y - gateHeight + TILE, gateWidth, gateHeight);
+  // SVG natural ratio: 672.56 wide × 535.34 tall
+  // Draw at full canvas width so the gate spans the whole screen
+  let gateWidth  = width;                      // 450px
+  let gateHeight = gateWidth * (535.34 / 976.78); // ~358px, preserves ratio
+
+  let drawX = 0;
+  let drawY = y - gateHeight + TILE;           // anchor base to the lane row
+
+  // drawingContext.drawImage renders the SVG natively at the target pixel size —
+  // the browser never bitmaps it at a small size first, so it stays sharp at any scale.
+  drawingContext.drawImage(gateElement, drawX, drawY, gateWidth, gateHeight);
 }
